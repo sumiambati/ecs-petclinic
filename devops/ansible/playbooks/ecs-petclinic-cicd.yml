@@ -1,0 +1,51 @@
+---
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Get Terraform S3 backend outputs
+      fetch_terraform_backend_outputs:
+        bucket: "dhs-poc-devsecops-terraform"
+        object: "ecs-petclinic-dev.tfstate"
+      register: tfoutputs
+    - name: Create task definition
+      ecs_taskdefinition:
+        region: us-east-1
+        family: petclinic-dev
+        execution_role_arn: "{{ tfoutputs.vars.execution_role_arn }}"
+        task_role_arn: "{{ tfoutputs.vars.task_role_arn }}"
+        containers:
+          - name: petclinic-dev
+            essential: true
+            image: "{{ image }}"
+            environment:
+              - name: "PORT"
+                value: "8080"
+              - name: "HEALTHCHECK"
+                value: "/"
+              - name: "PRODUCT"
+                value: "petclinic"
+              - name: "ENVIRONMENT"
+                value: "dev"
+            portMappings:
+              - containerPort: 8080
+                hostPort: 8080
+            logConfiguration:
+              logDriver: awslogs
+              options:
+                awslogs-group: /fargate/service/petclinic-dev
+                awslogs-region: us-east-1
+                awslogs-stream-prefix: ecs
+        launch_type: FARGATE
+        cpu: '256'
+        memory: '512'
+        state: present
+        network_mode: awsvpc
+      register: taskdef
+    - debug:
+        var: taskdef
+    - ecs_service:
+        state: present
+        name: petclinic-dev
+        cluster: petclinic-dev
+        task_definition: "{{ taskdef.taskdefinition.family }}:{{ taskdef.taskdefinition.revision }}"
+
